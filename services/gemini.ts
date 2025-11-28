@@ -2,18 +2,13 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Difficulty, GameScenario, Clue, Character, Language, Location, Interactable } from "../types";
 
-// Support both variable names for easier deployment
-const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
 
-const ai = new GoogleGenAI({ apiKey: apiKey || '' });
+if (!apiKey) {
+  throw new Error("Missing VITE_GEMINI_API_KEY");
+}
 
-// Helper to clean Markdown from JSON response
-const cleanJson = (text: string | undefined): string => {
-  if (!text) return "{}";
-  // Remove ```json and ``` markers
-  let cleaned = text.replace(/```json/g, "").replace(/```/g, "").trim();
-  return cleaned;
-};
+const ai = new GoogleGenAI({ apiKey });
 
 // --- Scenario Generation ---
 
@@ -103,7 +98,7 @@ export const generateScenario = async (difficulty: Difficulty, lang: Language): 
     }
   });
 
-  const scenario = JSON.parse(cleanJson(response.text)) as GameScenario;
+  const scenario = JSON.parse(response.text || "{}") as GameScenario;
   
   // --- MATH FIX: Ensure shares sum to 100 ---
   // Previous bug: added all remainder to player.
@@ -189,7 +184,7 @@ export const findClue = async (location: Location, interactable: Interactable, l
     }
   });
 
-  return JSON.parse(cleanJson(response.text)) as Clue;
+  return JSON.parse(response.text || "{}") as Clue;
 };
 
 // --- Battle/Debate Logic ---
@@ -238,5 +233,5 @@ export const resolveBattle = async (
     }
   });
 
-  return JSON.parse(cleanJson(response.text)) as BattleResult;
+  return JSON.parse(response.text || "{}") as BattleResult;
 };
