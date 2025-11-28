@@ -7,7 +7,7 @@ import { Globe, ArrowRight, Hexagon, CircuitBoard, Fingerprint } from 'lucide-re
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 const MAX_INVENTORY = 5;
-// 111
+
 // --- Translation Data for App.tsx ---
 const menuText = {
   en: {
