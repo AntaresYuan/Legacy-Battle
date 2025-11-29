@@ -1,9 +1,10 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { Clue, Character, GameScenario, LogEntry, Language, GamePhase, Location, Interactable, Direction } from '../types';
+import { getDB } from '../services/gemini';
 import { 
   Briefcase, Globe, X, MapPin, Menu, ShieldAlert, FileText, 
-  Target, Navigation, Search, Check, ChevronLeft, ChevronRight, User
+  Target, Navigation, Search, Check, ChevronLeft, ChevronRight, User, Terminal, Info, Play
 } from 'lucide-react';
 
 interface GameUIProps {
@@ -31,6 +32,11 @@ interface GameUIProps {
   onKeepItem: () => void;
   onDiscardItem: () => void;
   inventoryFull: boolean;
+  
+  showTutorial: boolean;
+  onCloseTutorial: () => void;
+  narratorText: string;
+  onEndPrologue: () => void; // New prop
 }
 
 const t = {
@@ -53,7 +59,8 @@ const t = {
     found: "Item Detected",
     keep: "Acquire",
     discard: "Discard",
-    invFull: "Storage Full"
+    invFull: "Storage Full",
+    skip: "Skip Prologue"
   },
   zh: {
     inventory: "物品栏",
@@ -74,7 +81,8 @@ const t = {
     found: "发现物品",
     keep: "收纳",
     discard: "丢弃",
-    invFull: "背包已满"
+    invFull: "背包已满",
+    skip: "跳过序章"
   }
 };
 
@@ -100,9 +108,14 @@ export const GameUI: React.FC<GameUIProps> = ({
   foundItem,
   onKeepItem,
   onDiscardItem,
-  inventoryFull
+  inventoryFull,
+  showTutorial,
+  onCloseTutorial,
+  narratorText,
+  onEndPrologue
 }) => {
   const txt = t[language];
+  const db = getDB(language);
   const [showInventory, setShowInventory] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const [viewDirection, setViewDirection] = useState<Direction>('NORTH');
@@ -145,8 +158,8 @@ export const GameUI: React.FC<GameUIProps> = ({
            <div className="flex items-center gap-2 text-slate-300">
              <span className="text-cyan-600">CYC</span> {turnCount}
            </div>
-           <div className="flex items-center gap-2 text-slate-300">
-             <Target size={14} className="text-cyan-400" /> {actionPoints}
+           <div className={`flex items-center gap-2 transition-colors ${actionPoints === 0 ? 'text-red-500 animate-pulse' : 'text-slate-300'}`}>
+             <Target size={14} className={actionPoints === 0 ? 'text-red-500' : 'text-cyan-400'} /> {actionPoints}
            </div>
          </div>
       </div>
@@ -160,6 +173,23 @@ export const GameUI: React.FC<GameUIProps> = ({
          <button onClick={() => setLanguage(language === 'en' ? 'zh' : 'en')} className="p-2 text-slate-500 hover:text-white transition-colors">
              <Globe size={20} />
          </button>
+      </div>
+    </div>
+  );
+
+  // --- NARRATOR BAR ---
+  const NarratorBar = () => (
+    <div className="absolute bottom-24 left-1/2 -translate-x-1/2 w-full max-w-2xl pointer-events-none z-30">
+      <div className="bg-slate-900/80 backdrop-blur-sm border-t border-b border-cyan-500/30 p-4 flex items-start gap-4 shadow-lg">
+         <div className="mt-1">
+            <Terminal size={16} className="text-cyan-500 animate-pulse" />
+         </div>
+         <div className="flex-1">
+            <span className="text-[10px] font-mono text-cyan-600 uppercase tracking-widest mb-1 block">Tactical Advisor</span>
+            <p className="text-sm font-mono text-cyan-100 leading-relaxed text-shadow-glow animate-fade-in key={narratorText}">
+              {narratorText}
+            </p>
+         </div>
       </div>
     </div>
   );
@@ -200,6 +230,91 @@ export const GameUI: React.FC<GameUIProps> = ({
       </div>
     </div>
   );
+
+  // --- PROLOGUE VIEW ---
+  const PrologueView = () => {
+    const [index, setIndex] = useState(0);
+    // CRITICAL FIX: Use the dynamic scenario prologue, NOT the static db one
+    const content = scenario.prologueText; 
+
+    useEffect(() => {
+      if (index < content.length) {
+        const timer = setTimeout(() => {
+          setIndex(prev => prev + 1);
+        }, 500); // 0.5 seconds per line for speed
+        return () => clearTimeout(timer);
+      }
+    }, [index]);
+
+    return (
+      <div className="absolute inset-0 bg-black z-50 flex items-center justify-center p-12 cursor-default">
+         <div className="max-w-2xl w-full space-y-8 pointer-events-none">
+            {content.slice(0, index + 1).map((line, i) => (
+              <p key={i} className="text-xl md:text-2xl font-serif text-slate-200 leading-relaxed animate-fade-in border-l-2 border-cyan-900 pl-6">
+                {line}
+              </p>
+            ))}
+            {index >= content.length && (
+              <div className="pt-12 flex justify-center animate-pulse pointer-events-auto">
+                <button 
+                  onClick={onEndPrologue}
+                  className="flex items-center gap-2 text-cyan-500 hover:text-cyan-400 uppercase tracking-widest font-bold text-sm transition-colors"
+                >
+                  <Play size={16} /> Click to Start
+                </button>
+              </div>
+            )}
+         </div>
+         
+         <button 
+           onClick={onEndPrologue}
+           className="absolute bottom-8 right-8 text-slate-600 hover:text-slate-400 text-xs uppercase tracking-widest transition-colors cursor-pointer z-50 pointer-events-auto"
+         >
+           {txt.skip} &gt;&gt;
+         </button>
+      </div>
+    );
+  };
+
+  // --- TUTORIAL MODAL ---
+  const TutorialModal = () => {
+    if (!showTutorial) return null;
+    const content = db.tutorial;
+    return (
+      <div className="absolute inset-0 z-[60] bg-black/80 backdrop-blur-md flex items-center justify-center animate-fade-in">
+        <div className="w-full max-w-2xl bg-slate-950 border border-cyan-500 shadow-[0_0_50px_rgba(34,211,238,0.2)] p-1">
+          <div className="bg-slate-900 p-8 relative overflow-hidden">
+             {/* Decorative Scanlines */}
+             <div className="absolute inset-0 opacity-10 pointer-events-none bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] bg-[length:100%_2px,3px_100%]"></div>
+             
+             <div className="flex items-center gap-4 mb-8 border-b border-slate-800 pb-4">
+                <Info size={32} className="text-cyan-400" />
+                <h2 className="text-2xl font-serif text-white uppercase tracking-wider">{content.title}</h2>
+             </div>
+             
+             <div className="grid grid-cols-2 gap-6 mb-8">
+               {content.steps.map((step, idx) => (
+                 <div key={idx} className="bg-slate-950/50 p-4 border-l-2 border-cyan-800 hover:border-cyan-400 transition-colors">
+                    <h3 className="text-cyan-400 text-xs font-bold uppercase tracking-widest mb-2 flex items-center gap-2">
+                       <span className="bg-cyan-900 text-cyan-300 w-5 h-5 flex items-center justify-center rounded-full text-[10px]">{idx + 1}</span>
+                       {step.title}
+                    </h3>
+                    <p className="text-slate-400 text-sm leading-relaxed">{step.desc}</p>
+                 </div>
+               ))}
+             </div>
+
+             <button 
+               onClick={onCloseTutorial}
+               className="w-full py-4 bg-cyan-700 hover:bg-cyan-600 text-white font-bold uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-2 group"
+             >
+               {content.button} <ChevronRight className="group-hover:translate-x-1 transition-transform" />
+             </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   // --- MAIN VIEW: MAP ---
   const NavView = () => (
@@ -310,7 +425,7 @@ export const GameUI: React.FC<GameUIProps> = ({
 
          {/* Characters in Room (Bottom Center) */}
          {charactersInLocation.length > 0 && (
-           <div className="absolute bottom-28 flex gap-6 z-30">
+           <div className="absolute bottom-40 flex gap-6 z-30">
               {charactersInLocation.map(char => (
                 <button
                   key={char.id}
@@ -424,11 +539,12 @@ export const GameUI: React.FC<GameUIProps> = ({
 
          {/* Interaction Panel */}
          <div className="h-96 border-t border-slate-800 bg-slate-950 flex">
-            <div className="w-1/3 border-r border-slate-800 p-8 flex flex-col justify-center bg-slate-900/30">
+            <div className="w-1/3 border-r border-slate-800 p-8 flex flex-col justify-center bg-slate-900/30 transition-colors duration-500">
                <span className="text-cyan-600 text-[10px] uppercase font-bold tracking-widest mb-4 flex items-center gap-2">
                  <ShieldAlert size={12} /> Incoming Transmission
                </span>
-               <p className="text-xl text-slate-200 font-serif leading-relaxed">
+               {/* Use the dynamic dialogueIntro which is updated on battle resolution */}
+               <p key={selectedCharacter.dialogueIntro} className="text-xl text-slate-200 font-serif leading-relaxed animate-fade-in">
                  "{selectedCharacter.dialogueIntro}"
                </p>
             </div>
@@ -531,14 +647,17 @@ export const GameUI: React.FC<GameUIProps> = ({
 
       <Header />
       
+      {gamePhase === GamePhase.PROLOGUE && <PrologueView />}
       {gamePhase === GamePhase.NAVIGATION && <NavView />}
       {gamePhase === GamePhase.LOCATION_VIEW && <LocationView />}
       {gamePhase === GamePhase.CONFRONTATION && <ConfrontationView />}
 
+      <NarratorBar />
       <Footer />
       <InventoryOverlay />
       <LogsOverlay />
       <ItemFoundModal />
+      <TutorialModal />
 
       {/* Processing Spinner */}
       {isProcessing && (

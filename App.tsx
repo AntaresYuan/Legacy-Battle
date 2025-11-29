@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { generateScenario, findClue, resolveBattle } from './services/gemini';
+import { generateScenario, findClue, resolveBattle, getDB } from './services/gemini';
 import { Difficulty, GameScenario, Clue, Character, LogEntry, GamePhase, Language, Interactable } from './types';
 import { GameUI } from './components/GameUI';
 import { Globe, ArrowRight, Hexagon, CircuitBoard, Fingerprint } from 'lucide-react';
@@ -87,6 +87,9 @@ const GameLogo = () => (
   </div>
 );
 
+// Helper to get random array item
+const getRnd = (arr: string[]) => arr[Math.floor(Math.random() * arr.length)];
+
 export default function App() {
   const [language, setLanguage] = useState<Language>('zh');
   const [phase, setPhase] = useState<GamePhase>(GamePhase.MENU);
@@ -104,8 +107,13 @@ export default function App() {
   // New State for Exploration Logic
   const [pendingClue, setPendingClue] = useState<Clue | null>(null); // Item found but not yet taken
   const [pendingInteractableId, setPendingInteractableId] = useState<string | null>(null); // What we just searched
+  
+  // Tutorial and Narrator
+  const [showTutorial, setShowTutorial] = useState(false);
+  const [narratorText, setNarratorText] = useState("");
 
   const txt = menuText[language];
+  const db = getDB(language);
 
   const addLog = (text: string, speaker: string = 'System', type: LogEntry['type'] = 'neutral') => {
     setLogs(prev => [...prev, { id: generateId(), text, speaker, type }]);
@@ -118,20 +126,27 @@ export default function App() {
     try {
       const newScenario = await generateScenario(diff, language);
       setScenario(newScenario);
-      setPhase(GamePhase.NAVIGATION);
+      setPhase(GamePhase.PROLOGUE); // Start with Prologue
       setPlayerLocationId(null);
       setInventory([]);
       setActionPoints(5);
       setTurnCount(1);
       setLogs([]);
       addLog(txt.initLog, 'System', 'info');
+      setNarratorText(""); // Clear for prologue
+
     } catch (error) {
       console.error(error);
-      alert("API Error. Please check your key and try again.");
       setPhase(GamePhase.MENU);
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  const handlePrologueEnd = () => {
+    setPhase(GamePhase.NAVIGATION);
+    setShowTutorial(true);
+    setNarratorText(db.narrator.intro);
   };
 
   const handleMove = (locationId: string) => {
@@ -145,20 +160,29 @@ export default function App() {
       setActionPoints(prev => prev - 1);
       setPlayerLocationId(locationId);
       setPhase(GamePhase.LOCATION_VIEW);
+      setNarratorText(getRnd(db.narrator.move));
     } else {
       addLog(txt.actionLow, 'System', 'danger');
+      setNarratorText(db.narrator.low_ap);
     }
   };
 
   const handleInspect = async (interactable: Interactable) => {
-    if (!scenario || !playerLocationId || actionPoints <= 0) return;
+    if (!scenario || !playerLocationId || actionPoints <= 0) {
+        if (actionPoints <= 0) setNarratorText(db.narrator.low_ap);
+        return;
+    }
     const currentLocation = scenario.locations.find(l => l.id === playerLocationId);
     if (!currentLocation) return;
 
     setIsProcessing(true);
     setActionPoints(prev => prev - 1);
+    setNarratorText(getRnd(db.narrator.search_start));
 
     try {
+      // Simulate delay for narrator effect
+      await new Promise(r => setTimeout(r, 600));
+
       // Mark as searched immediately
       setScenario(prev => {
         if (!prev) return null;
@@ -177,9 +201,11 @@ export default function App() {
         const newClue = await findClue(currentLocation, interactable, language);
         const clueWithLoc = { ...newClue, foundInLocation: playerLocationId };
         setPendingClue(clueWithLoc);
+        setNarratorText(getRnd(db.narrator.search_found));
         // Modal will open automatically because pendingClue is set
       } else {
         addLog(`${txt.nothingFound} ${interactable.name}`, 'System', 'neutral');
+        setNarratorText(getRnd(db.narrator.search_empty));
       }
 
     } catch (error) {
@@ -192,7 +218,7 @@ export default function App() {
   const handleKeepItem = () => {
     if (!pendingClue) return;
     if (inventory.length >= MAX_INVENTORY) {
-      // UI handles disabling button or showing warning, logic here strictly prevents
+      setNarratorText(db.narrator.inventory_full);
       return;
     }
     
@@ -210,10 +236,14 @@ export default function App() {
   const handleTalk = (char: Character) => {
     setSelectedCharacter(char);
     setPhase(GamePhase.CONFRONTATION);
+    setNarratorText(db.narrator.battle_start);
   };
 
   const handleUseClue = async (clue: Clue) => {
-    if (!scenario || !selectedCharacter || actionPoints <= 0) return;
+    if (!scenario || !selectedCharacter || actionPoints <= 0) {
+        if (actionPoints <= 0) setNarratorText(db.narrator.low_ap);
+        return;
+    }
 
     setIsProcessing(true);
     setActionPoints(prev => prev - 1);
@@ -229,11 +259,19 @@ export default function App() {
       // Ensure we don't take more than they have
       if (shareChange > selectedCharacter.share) shareChange = selectedCharacter.share;
       
+      // Update the character with NEW DIALOGUE
+      const updatedCharacter = { 
+        ...selectedCharacter, 
+        dialogueIntro: result.dialogue // <--- CRITICAL: Update the visible dialogue
+      };
+
       const newCharacters = scenario.characters.map(r => {
         if (r.id === selectedCharacter.id) {
           const newShare = r.share - shareChange;
           return { 
-            ...r, 
+            ...r,
+            // Also update the dialogue in the main list so it persists if we come back
+            dialogueIntro: result.dialogue, 
             share: Math.max(0, newShare),
             isDefeated: newShare <= 0 
           };
@@ -248,6 +286,9 @@ export default function App() {
         characters: newCharacters,
         playerShare: newPlayerShare
       });
+      
+      // Update selected character to show new text immediately
+      setSelectedCharacter(updatedCharacter);
 
       addLog(result.dialogue, 'Log', result.isCriticalSuccess ? 'success' : 'neutral');
       
@@ -257,11 +298,21 @@ export default function App() {
         addLog(`${txt.shareLoss} ${shareChange.toFixed(1)}%`, 'System', 'danger');
       }
 
-      const updatedChar = newCharacters.find(c => c.id === selectedCharacter.id);
-      if (updatedChar && updatedChar.isDefeated) {
-        setPhase(GamePhase.LOCATION_VIEW);
-        setSelectedCharacter(null);
-        addLog(`${selectedCharacter.name} ${txt.eliminated}`, 'System', 'success');
+      const updatedCharCheck = newCharacters.find(c => c.id === selectedCharacter.id);
+      if (updatedCharCheck && updatedCharCheck.isDefeated) {
+        // Wait a moment so they can read the defeat line
+        setTimeout(() => {
+            setPhase(GamePhase.LOCATION_VIEW);
+            setSelectedCharacter(null);
+            addLog(`${selectedCharacter.name} ${txt.eliminated}`, 'System', 'success');
+            setNarratorText(language === 'zh' ? '目标已被压制。份额回收完毕。' : 'Target neutralized. Equity secured.');
+        }, 2000);
+      } else {
+        // Update narrator with result explicitly
+        const resultMsg = result.isCriticalSuccess 
+            ? (language === 'zh' ? `暴击！份额 +${shareChange}%` : `CRITICAL HIT! Equity +${shareChange}%`) 
+            : (language === 'zh' ? `压制成功。份额 +${shareChange}%` : `Success. Equity +${shareChange}%`);
+        setNarratorText(resultMsg);
       }
 
     } catch (error) {
@@ -275,6 +326,7 @@ export default function App() {
     setTurnCount(prev => prev + 1);
     setActionPoints(5);
     addLog(`--- ${txt.logHeader} ${turnCount + 1} ---`, 'System', 'info');
+    setNarratorText(language === 'zh' ? '行动力充能完毕。新的周期开始。' : 'Action points recharged. New cycle initiated.');
   };
 
   useEffect(() => {
@@ -427,6 +479,7 @@ export default function App() {
         onCancelConfrontation={() => {
           setPhase(GamePhase.LOCATION_VIEW);
           setSelectedCharacter(null);
+          setNarratorText(db.narrator.move[1]);
         }}
         selectedCharacter={selectedCharacter}
         isProcessing={isProcessing}
@@ -438,10 +491,14 @@ export default function App() {
         onKeepItem={handleKeepItem}
         onDiscardItem={handleDiscardItem}
         inventoryFull={inventory.length >= MAX_INVENTORY}
+        showTutorial={showTutorial}
+        onCloseTutorial={() => setShowTutorial(false)}
+        narratorText={narratorText}
+        onEndPrologue={handlePrologueEnd}
       />
       
       {/* End Turn Button */}
-      {actionPoints <= 0 && !isProcessing && phase !== GamePhase.CONFRONTATION && !pendingClue && (
+      {actionPoints <= 0 && !isProcessing && phase !== GamePhase.CONFRONTATION && !pendingClue && !showTutorial && phase !== GamePhase.PROLOGUE && (
         <div className="fixed bottom-32 left-1/2 -translate-x-1/2 z-50 animate-bounce-slow">
           <button 
             onClick={nextTurn}

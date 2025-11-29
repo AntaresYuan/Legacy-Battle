@@ -21,6 +21,16 @@
           -ms-overflow-style: none;
           scrollbar-width: none;
       }
+      .animate-fade-in {
+        animation: fadeIn 0.3s ease-out forwards;
+      }
+      @keyframes fadeIn {
+        from { opacity: 0; transform: scale(0.95); }
+        to { opacity: 1; transform: scale(1); }
+      }
+      .text-shadow-glow {
+        text-shadow: 0 0 10px rgba(34,211,238, 0.5);
+      }
     </style>
   <script type="importmap">
 {
@@ -29,7 +39,6 @@
     "react": "https://aistudiocdn.com/react@^19.2.0",
     "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
     "uuid": "https://aistudiocdn.com/uuid@^13.0.0",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0",
     "lucide-react": "https://aistudiocdn.com/lucide-react@^0.554.0"
   }
 }
@@ -37,6 +46,5 @@
 </head>
   <body class="bg-stone-900 text-stone-100 antialiased overflow-hidden">
     <div id="root"></div>
-    <script type="module" src="/index.tsx"></script>
   </body>
 </html>
